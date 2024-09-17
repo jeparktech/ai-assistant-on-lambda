@@ -1,22 +1,21 @@
 import json
 import boto3
+import os
+import pymysql
 from openai import OpenAI
-import openai
 from datetime import datetime
-import uuid
+from auth_helper import verify_access_token
 
 secrets_client = boto3.client('secretsmanager')
 
 dynamodb = boto3.resource('dynamodb')
 user_table = dynamodb.Table('User')
 
-
-
-def get_secret(secret_name):
+def get_secret(secret_name, secret_string):
     try:
         response = secrets_client.get_secret_value(SecretId=secret_name)
         secret = json.loads(response['SecretString'])
-        return secret['OPENAI_API_KEY']
+        return secret[secret_string]
     except Exception as e:
         raise Exception(f"Unable to retrieve secret: {str(e)}")
     
@@ -34,14 +33,51 @@ def get_user_from_dynamodb(user_id):
 
     except Exception as e:
         raise Exception(f"Error retrieving user_id from DynamoDB: {str(e)}")
+    
+def connect_to_rds():
+    try:
+        connection = pymysql.connect(
+            host=os.getenv('RDS_HOST'),
+            user=get_secret(os.getenv('SECRET_MANAGER_NAME'), 'username'),
+            password=get_secret(os.getenv('SECRET_MANAGER_NAME'), 'password'),
+            database=os.getenv('DB_NAME'),
+            connect_timeout=5
+        )
+        return connection
+    except Exception as e:
+        print(f"ERROR: Unable to connect to MySQL instance. {str(e)}")
+        raise e
+    
 
 def lambda_handler(event, context):
     try:
+        connection = connect_to_rds()
+
+        auth_header = event['headers'].get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            raise ValueError('Missing or invalid Authorization header')
+        access_token = auth_header.split(' ')[1]
+
+        is_valid_token, token_user_id = verify_access_token(access_token, connection)
+        if not is_valid_token:
+            return {
+                'statusCode': 401,
+                'body': json.dumps({'error': 'Unauthorized - Invalid access token'})
+            }
+
         body = json.loads(event['body'])
-        user_id = body['userId']
-        user_id = get_user_from_dynamodb(user_id)
-        if not user_id:
-            raise ValueError("user_id is required")
+        request_user_id = body.get('userId')
+
+        if not request_user_id:
+            raise ValueError('user_id is required in the request body')
+
+        get_user_from_dynamodb(request_user_id)
+        if token_user_id != request_user_id:
+            return {
+                'statusCode': 403,
+                'body': json.dumps({'error': 'Forbidden - user_id does not match with the access token'})
+            }
+
     except Exception as e:
         return {
             'statusCode': 400,
@@ -50,19 +86,19 @@ def lambda_handler(event, context):
 
 
     try:
-        client = OpenAI(api_key=get_secret('prod/earthmera'))
+        client = OpenAI(api_key=get_secret('prod/earthmera', 'OPENAI_API_KEY'))
         assistant_id = "YOUR_ASSISTANT_ID"
         thread = client.beta.threads.create()
 
         thread_id = thread.id
         created_at = datetime.utcnow().isoformat()
 
-        dynamodb = boto3.resource('dynamodb')
+        # DynamoDB에 thread 저장
         table = dynamodb.Table('Thread')
         table.put_item(
             Item={
                 'thread_id': thread_id,
-                'user_id': user_id,
+                'user_id': request_user_id,
                 'assistant_id': assistant_id,
                 'created_at': created_at,
             }
