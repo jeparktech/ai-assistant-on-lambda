@@ -65,18 +65,7 @@ def lambda_handler(event, context):
                 'body': json.dumps({'error': 'Unauthorized - Invalid access token'})
             }
 
-        body = json.loads(event['body'])
-        request_user_id = body.get('userId')
-
-        if not request_user_id:
-            raise ValueError('user_id is required in the request body')
-
-        get_user_from_dynamodb(request_user_id)
-        if token_user_id != request_user_id:
-            return {
-                'statusCode': 403,
-                'body': json.dumps({'error': 'Forbidden - user_id does not match with the access token'})
-            }
+        get_user_from_dynamodb(token_user_id)
 
     except Exception as e:
         return {
@@ -87,7 +76,7 @@ def lambda_handler(event, context):
 
     try:
         client = OpenAI(api_key=get_secret('prod/earthmera', 'OPENAI_API_KEY'))
-        assistant_id = "YOUR_ASSISTANT_ID"
+        assistant_id = "asst_iq0TlYEMvruN29nxKPtttiJt"
         thread = client.beta.threads.create()
 
         thread_id = thread.id
@@ -98,7 +87,6 @@ def lambda_handler(event, context):
         table.put_item(
             Item={
                 'thread_id': thread_id,
-                'user_id': request_user_id,
                 'assistant_id': assistant_id,
                 'created_at': created_at,
             }

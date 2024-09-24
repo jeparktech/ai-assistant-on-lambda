@@ -115,26 +115,19 @@ def lambda_handler(event, context):
                 'body': json.dumps({'error': 'Unauthorized - Invalid access token'})
             }
         body = json.loads(event['body'])
-        user_id = body['userId']
+        
         message_content = body['message']
         thread_id = event['pathParameters']['thread_id']
         # body = json.loads(event['body'])
         # user_id = body.get('user_id')
         # message_content = body.get('message')
 
-        user_id = get_user_from_dynamodb(user_id)
+        get_user_from_dynamodb(token_user_id)
         assistant_id = get_assistant_id_from_dynamodb(thread_id)
 
-        if not user_id or not message_content:
-            raise ValueError("Both 'user_id' and 'message' are required")
         
         if not thread_id:
             raise ValueError("'thread_id' is required")
-        if token_user_id != user_id:
-            return {
-                'statusCode': 403,
-                'body': json.dumps({'error': 'Forbidden - user_id does not match with the access token'})
-            }
     except Exception as e:
         return {
             'statusCode': 400,
